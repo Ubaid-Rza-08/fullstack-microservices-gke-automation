@@ -65,12 +65,17 @@ __pycache__/
 # =============================================================================
 # TERRAFORM
 # =============================================================================
-**/*.tfstate
-**/*.tfstate.*
-**/.terraform/
-**/.terraform.lock.hcl
-**/terraform.tfvars
-**/crash.log
+# Terraform sensitive files — never commit these
+terraform.tfvars
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+crash.log
+
+# GitHub Actions key — NEVER commit this
+github-actions-key.json
+*.json
 
 # =============================================================================
 # DOCKER

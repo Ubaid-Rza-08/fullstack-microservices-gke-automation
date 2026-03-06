@@ -1,6 +1,7 @@
 # ══════════════════════════════════════════════════════════════════════════════
 #  Terraform — Production GKE Infrastructure
-#  Resources: VPC, Subnets, GKE Cluster, Node Pool (autoscaling)
+#  Resources: VPC, Subnets, GKE Cluster, Node Pool (autoscaling),
+#             GitHub Actions Service Account + Key
 # ══════════════════════════════════════════════════════════════════════════════
 
 terraform {
@@ -12,15 +13,6 @@ terraform {
       version = "~> 5.0"
     }
   }
-
-  # ── Remote state on GCS (recommended for teams) ───────────────────────────
-  # Uncomment and set your bucket name after running:
-  #   gsutil mb gs://YOUR_PROJECT_ID-tf-state
-  #
-  # backend "gcs" {
-  #   bucket = "YOUR_PROJECT_ID-tf-state"
-  #   prefix = "tax-calculator/state"
-  # }
 }
 
 provider "google" {
@@ -34,15 +26,60 @@ resource "google_project_service" "apis" {
     "container.googleapis.com",
     "compute.googleapis.com",
     "iam.googleapis.com",
+    "iamcredentials.googleapis.com",
   ])
   service            = each.key
   disable_on_destroy = false
 }
 
-# ── VPC Network ───────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+#  GITHUB ACTIONS — Service Account + Roles + Key
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── Create Service Account ────────────────────────────────────────────────────
+resource "google_service_account" "github_actions_sa" {
+  account_id   = "github-actions-sa"
+  display_name = "GitHub Actions SA"
+  description  = "Used by GitHub Actions CI/CD to deploy to GKE"
+
+  depends_on = [google_project_service.apis]
+}
+
+# ── Grant Roles ───────────────────────────────────────────────────────────────
+resource "google_project_iam_member" "github_actions_roles" {
+  for_each = toset([
+    "roles/container.developer",      # deploy to GKE
+    "roles/container.clusterViewer",  # get cluster credentials
+    "roles/iam.serviceAccountUser",   # act as service account
+  ])
+  project = var.project_id
+  role    = each.key
+  member  = "serviceAccount:${google_service_account.github_actions_sa.email}"
+}
+
+# ── Create JSON Key ───────────────────────────────────────────────────────────
+resource "google_service_account_key" "github_actions_key" {
+  service_account_id = google_service_account.github_actions_sa.name
+  public_key_type    = "TYPE_X509_PEM_FILE"
+
+  depends_on = [google_project_iam_member.github_actions_roles]
+}
+
+# ── Save key to local file (copy content → GitHub Secret GCP_SA_KEY) ─────────
+resource "local_file" "github_actions_key_file" {
+  content  = base64decode(google_service_account_key.github_actions_key.private_key)
+  filename = "${path.module}/github-actions-key.json"
+
+  # ⚠️ This file is gitignored — never commit it
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  VPC NETWORK
+# ═══════════════════════════════════════════════════════════════════════════════
+
 resource "google_compute_network" "vpc" {
   name                    = "${var.cluster_name}-vpc"
-  auto_create_subnetworks = false   # custom subnets only
+  auto_create_subnetworks = false
 
   depends_on = [google_project_service.apis]
 }
@@ -54,7 +91,6 @@ resource "google_compute_subnetwork" "subnet" {
   region        = var.region
   network       = google_compute_network.vpc.id
 
-  # Secondary ranges required for GKE VPC-native networking
   secondary_ip_range {
     range_name    = "pods"
     ip_cidr_range = var.pods_cidr
@@ -65,10 +101,10 @@ resource "google_compute_subnetwork" "subnet" {
     ip_cidr_range = var.services_cidr
   }
 
-  private_ip_google_access = true   # allows private nodes to reach GCP APIs
+  private_ip_google_access = true
 }
 
-# ── Cloud Router + NAT (lets private nodes pull Docker images) ────────────────
+# ── Cloud Router + NAT ────────────────────────────────────────────────────────
 resource "google_compute_router" "router" {
   name    = "${var.cluster_name}-router"
   region  = var.region
@@ -83,7 +119,10 @@ resource "google_compute_router_nat" "nat" {
   source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
 }
 
-# ── GKE Service Account ───────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+#  GKE NODE SERVICE ACCOUNT
+# ═══════════════════════════════════════════════════════════════════════════════
+
 resource "google_service_account" "gke_sa" {
   account_id   = "${var.cluster_name}-sa"
   display_name = "GKE Node Service Account"
@@ -101,33 +140,32 @@ resource "google_project_iam_member" "gke_sa_roles" {
   member  = "serviceAccount:${google_service_account.gke_sa.email}"
 }
 
-# ── GKE Cluster ───────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+#  GKE CLUSTER
+# ═══════════════════════════════════════════════════════════════════════════════
+
 resource "google_container_cluster" "primary" {
   name     = var.cluster_name
   location = var.zone
 
-  # Remove default node pool — we manage our own below
   remove_default_node_pool = true
   initial_node_count       = 1
 
   network    = google_compute_network.vpc.name
   subnetwork = google_compute_subnetwork.subnet.name
 
-  # VPC-native (alias IP) — required for proper pod networking
   networking_mode = "VPC_NATIVE"
   ip_allocation_policy {
     cluster_secondary_range_name  = "pods"
     services_secondary_range_name = "services"
   }
 
-  # Private cluster — nodes have no public IPs
   private_cluster_config {
     enable_private_nodes    = true
-    enable_private_endpoint = false   # keep public endpoint for kubectl access
+    enable_private_endpoint = false
     master_ipv4_cidr_block  = var.master_cidr
   }
 
-  # Allow kubectl from anywhere (restrict to your IP in production)
   master_authorized_networks_config {
     cidr_blocks {
       cidr_block   = "0.0.0.0/0"
@@ -135,16 +173,14 @@ resource "google_container_cluster" "primary" {
     }
   }
 
-  # Workload Identity — secure way for pods to access GCP APIs
   workload_identity_config {
     workload_pool = "${var.project_id}.svc.id.goog"
   }
 
-  # Enable logging and monitoring
   logging_service    = "logging.googleapis.com/kubernetes"
   monitoring_service = "monitoring.googleapis.com/kubernetes"
 
-  deletion_protection = false   # set true for real production
+  deletion_protection = false
 
   depends_on = [google_project_service.apis]
 }
@@ -155,7 +191,6 @@ resource "google_container_node_pool" "primary_nodes" {
   location   = var.zone
   cluster    = google_container_cluster.primary.name
 
-  # Autoscaling config
   autoscaling {
     min_node_count = var.min_nodes
     max_node_count = var.max_nodes
@@ -163,7 +198,6 @@ resource "google_container_node_pool" "primary_nodes" {
 
   initial_node_count = var.initial_nodes
 
-  # Auto repair & upgrade
   management {
     auto_repair  = true
     auto_upgrade = true
@@ -179,7 +213,6 @@ resource "google_container_node_pool" "primary_nodes" {
       "https://www.googleapis.com/auth/cloud-platform"
     ]
 
-    # Workload Identity on nodes
     workload_metadata_config {
       mode = "GKE_METADATA"
     }
@@ -202,7 +235,7 @@ resource "google_container_node_pool" "primary_nodes" {
   }
 }
 
-# ── Firewall: allow GKE master to reach nodes ─────────────────────────────────
+# ── Firewall ──────────────────────────────────────────────────────────────────
 resource "google_compute_firewall" "gke_master_webhook" {
   name    = "${var.cluster_name}-master-webhook"
   network = google_compute_network.vpc.name
