@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: dcode007/tax-calculator-frontend:latest
+          image: ubaidrza/tax-calculator-frontend:latest
           ports:
             - containerPort: 80
 ---

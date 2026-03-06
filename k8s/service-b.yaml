@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: service-b
-          image: dcode007/tax-service-b:latest
+          image: ubaidrza/tax-service-b:latest
           ports:
             - containerPort: 4000
           env:

@@ -125,10 +125,10 @@ jobs:
 
       - name: Deploy to GKE (Google Kubernetes Engine)
         run: |
-          kubectl apply -f k8s/gcp/app2-tax-calculator/service-b.yaml
-          kubectl apply -f k8s/gcp/app2-tax-calculator/service-a.yaml
-          kubectl apply -f k8s/gcp/app2-tax-calculator/frontend.yaml
-          kubectl apply -f k8s/gcp/app2-tax-calculator/ingress.yaml
+          kubectl apply -f k8s/service-b.yaml
+          kubectl apply -f k8s/service-a.yaml
+          kubectl apply -f k8s/frontend.yaml
+          kubectl apply -f k8s/ingress.yaml
 
       - name: Rollout restart (pull latest images)
         run: |

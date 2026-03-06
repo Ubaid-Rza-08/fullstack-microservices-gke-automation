@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: service-a
-          image: dcode007/tax-service-a:latest
+          image: ubaidrza/tax-service-a:latest
           ports:
             - containerPort: 3000
           env:
