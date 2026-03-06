@@ -1,0 +1,24 @@
+# ══════════════════════════════════════════════════════════════════════════════
+#  Terraform Variable Values
+#  Copy to terraform.tfvars and fill in your values
+#  cp terraform.tfvars.example terraform.tfvars
+#
+#  ⚠️  NEVER commit terraform.tfvars to Git (it's in .gitignore)
+# ══════════════════════════════════════════════════════════════════════════════
+
+project_id   = "your-gcp-project-id"
+region       = "us-central1"
+zone         = "us-central1-a"
+cluster_name = "tax-calculator"
+
+# ── Networking (safe defaults — no need to change) ────────────────────────────
+subnet_cidr   = "10.0.0.0/20"
+pods_cidr     = "10.48.0.0/14"
+services_cidr = "10.52.0.0/20"
+master_cidr   = "172.16.0.0/28"
+
+# ── Node Pool ─────────────────────────────────────────────────────────────────
+machine_type  = "e2-medium"    # 2 vCPU, 4GB RAM — good for this project
+initial_nodes = 1
+min_nodes     = 1
+max_nodes     = 4

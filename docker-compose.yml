@@ -1,0 +1,35 @@
+services:
+  service-a:
+    build: ./docker/app2-tax-calculator/spring/service-a
+    ports:
+      - "3100:3000"
+    depends_on:
+      - service-b
+    environment:
+      - TAX_SERVICE_URL=http://service-b:4000
+      - FRONTEND_URL=http://localhost:5173
+    networks:
+      - tax-network
+
+  service-b:
+    build: ./docker/app2-tax-calculator/spring/service-b
+    ports:
+      - "3200:4000"
+    networks:
+      - tax-network
+
+  frontend:
+    build:
+      context: ./docker/app2-tax-calculator/tax-calculator-frontend
+      args:
+        - VITE_API_URL=/api
+    ports:
+      - "5173:80"
+    depends_on:
+      - service-a
+    networks:
+      - tax-network
+
+networks:
+  tax-network:
+    driver: bridge
